@@ -305,6 +305,7 @@ class JarvisVM(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    @JvmName("switchHandsFree")
     fun setHandsFree(on: Boolean) {
         handsFree = on
         if (on) {

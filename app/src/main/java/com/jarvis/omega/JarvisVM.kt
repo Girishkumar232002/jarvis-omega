@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -12,6 +13,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -71,7 +73,13 @@ class JarvisVM(app: Application) : AndroidViewModel(app) {
         },
     )
 
+    /** Download / install state of each on-device model, shown in Settings. */
+    val modelStates = mutableStateMapOf<String, ModelState>()
+    private var polling: Job? = null
+
     init {
+        LocalModels.init(app)
+        refreshModels()
         messages.addAll(store.loadChat())
         notes.addAll(store.loadNotes())
         reminders.addAll(store.loadReminders())
@@ -101,9 +109,9 @@ class JarvisVM(app: Application) : AndroidViewModel(app) {
         }
 
         val s = settings
-        val order = Router.plan(text, s)
+        val order = Router.plan(s)
         if (order.isEmpty()) {
-            val msg = "No usable AI provider yet. Open Settings, add an API key, and check the provider mode."
+            val msg = "No AI brain is ready yet. Open Settings and download a free on-device model (works offline, no key), or connect Ollama on your PC."
             messages.add(ChatMsg("assistant", msg))
             persist()
             finishTurn(null, fromVoice)
@@ -238,6 +246,39 @@ class JarvisVM(app: Application) : AndroidViewModel(app) {
             return "Noted: ${it.groupValues[1].trim()}"
         }
         return null
+    }
+
+    // ---------------------------------------------------------------- on-device models
+
+    fun refreshModels() {
+        LocalModels.all.forEach { modelStates[it.id] = LocalModels.state(it) }
+        if (modelStates.values.any { it is ModelState.Downloading } && polling?.isActive != true) {
+            polling = viewModelScope.launch {
+                while (true) {
+                    delay(1000)
+                    LocalModels.all.forEach { modelStates[it.id] = LocalModels.state(it) }
+                    if (modelStates.values.none { it is ModelState.Downloading }) break
+                }
+            }
+        }
+    }
+
+    fun downloadModel(m: LocalModel) {
+        LocalModels.start(m)
+        useModel(m)
+        refreshModels()
+    }
+
+    fun deleteModel(m: LocalModel) {
+        LocalModels.remove(m)
+        refreshModels()
+    }
+
+    fun useModel(m: LocalModel) {
+        if (settings.localModel != m.id) {
+            settings = settings.copy(localModel = m.id)
+            store.saveSettings(settings)
+        }
     }
 
     // ---------------------------------------------------------------- notes

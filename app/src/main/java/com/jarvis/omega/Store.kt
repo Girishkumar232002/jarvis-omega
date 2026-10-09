@@ -19,6 +19,10 @@ class Store(private val ctx: Context) {
             openaiModel = prefs.getString("openaiModel", d.openaiModel) ?: d.openaiModel,
             geminiModel = prefs.getString("geminiModel", d.geminiModel) ?: d.geminiModel,
             mode = prefs.getString("mode", d.mode) ?: d.mode,
+            localModel = prefs.getString("localModel", d.localModel) ?: d.localModel,
+            useGpu = prefs.getBoolean("useGpu", d.useGpu),
+            ollamaUrl = prefs.getString("ollamaUrl", d.ollamaUrl) ?: d.ollamaUrl,
+            ollamaModel = prefs.getString("ollamaModel", d.ollamaModel) ?: d.ollamaModel,
             systemPrompt = prefs.getString("systemPrompt", d.systemPrompt) ?: d.systemPrompt,
             speak = prefs.getBoolean("speak", d.speak),
             speechRate = prefs.getFloat("speechRate", d.speechRate),
@@ -35,6 +39,10 @@ class Store(private val ctx: Context) {
             .putString("openaiModel", s.openaiModel)
             .putString("geminiModel", s.geminiModel)
             .putString("mode", s.mode)
+            .putString("localModel", s.localModel)
+            .putBoolean("useGpu", s.useGpu)
+            .putString("ollamaUrl", s.ollamaUrl)
+            .putString("ollamaModel", s.ollamaModel)
             .putString("systemPrompt", s.systemPrompt)
             .putBoolean("speak", s.speak)
             .putFloat("speechRate", s.speechRate)

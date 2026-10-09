@@ -17,7 +17,11 @@ data class Settings(
     val anthropicModel: String = "claude-sonnet-5-5",
     val openaiModel: String = "gpt-4o",
     val geminiModel: String = "gemini-2.5-flash",
-    val mode: String = "auto", // auto | anthropic | openai | gemini
+    val mode: String = "auto", // auto | local | ollama | anthropic | openai | gemini
+    val localModel: String = "qwen2.5-1.5b",
+    val useGpu: Boolean = false,
+    val ollamaUrl: String = "",
+    val ollamaModel: String = "llama3.2",
     val systemPrompt: String = DEFAULT_SYSTEM,
     val speak: Boolean = true,
     val speechRate: Float = 1.0f,

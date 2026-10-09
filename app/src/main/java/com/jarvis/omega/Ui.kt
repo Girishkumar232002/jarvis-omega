@@ -147,6 +147,16 @@ fun ChatScreen(vm: JarvisVM, withMic: (() -> Unit) -> Unit) {
             modifier = Modifier.weight(1f).fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            if (vm.messages.isEmpty()) {
+                item {
+                    Text(
+                        "Hi, I'm JARVIS. To give me a brain with no API key, open Settings and download an on-device model once. Reminders and notes already work offline.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 24.dp),
+                    )
+                }
+            }
             items(vm.messages) { m -> Bubble(m) }
         }
         val line = when {
@@ -326,39 +336,101 @@ private fun Field(
 }
 
 @Composable
-fun SettingsScreen(vm: JarvisVM) {
-    var s by remember { mutableStateOf(vm.settings) }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
-        Text("Settings", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
-        Text(
-            "API keys are stored only in this app's private storage on your phone and are sent only to the provider you configure.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(vertical = 6.dp),
-        )
-
-        Text("Provider mode", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
-        listOf("auto" to "Auto (router picks, falls back)", "anthropic" to "Claude only", "openai" to "OpenAI only", "gemini" to "Gemini only")
-            .forEach { (id, label) ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = s.mode == id, onClick = { s = s.copy(mode = id) })
-                    Text(label)
+fun ModelCard(vm: JarvisVM, m: LocalModel) {
+    val st = vm.modelStates[m.id] ?: ModelState.Missing
+    val selected = vm.settings.localModel == m.id
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(selected = selected, onClick = { vm.useModel(m) })
+                Column(Modifier.weight(1f)) {
+                    Text(m.name, fontWeight = FontWeight.Bold)
+                    Text(
+                        "${m.size} · ${m.note}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                val label = when (st) {
+                    is ModelState.Installed -> "Installed ✓"
+                    is ModelState.Downloading -> "Downloading… ${st.percent}%"
+                    is ModelState.Failed -> "Download failed (${st.reason})"
+                    else -> "Not downloaded"
+                }
+                Text(label, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                when (st) {
+                    is ModelState.Installed -> TextButton(onClick = { vm.deleteModel(m) }) { Text("Delete") }
+                    is ModelState.Downloading -> TextButton(onClick = { vm.deleteModel(m) }) { Text("Cancel") }
+                    else -> Button(onClick = { vm.downloadModel(m) }) { Text("Download") }
+                }
+            }
+        }
+    }
+}
 
-        Text("Providers", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
+@Composable
+fun SettingsScreen(vm: JarvisVM) {
+    var s by remember { mutableStateOf(vm.settings) }
+    LaunchedEffect(Unit) { vm.refreshModels() }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
+        Text("Settings", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary)
+
+        Text("On-device AI (free, offline, no key)", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
+        Text(
+            "Download one model once over Wi-Fi. After that JARVIS thinks on your phone, even with no internet. The first reply after opening the app takes a few seconds while the model loads.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(vertical = 4.dp),
+        )
+        LocalModels.all.forEach { m -> ModelCard(vm, m) }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(checked = s.useGpu, onCheckedChange = { s = s.copy(useGpu = it) })
+            Spacer(Modifier.width(8.dp))
+            Text("Use GPU (faster on many phones; turn off if replies fail)", style = MaterialTheme.typography.bodySmall)
+        }
+
+        Text("Which brain to use", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
+        listOf(
+            "auto" to "Auto (phone first, then PC, then cloud)",
+            "local" to "On-device only",
+            "ollama" to "My PC (Ollama) only",
+            "anthropic" to "Claude only (needs key)",
+            "openai" to "OpenAI only (needs key)",
+            "gemini" to "Gemini only (needs key)",
+        ).forEach { (id, label) ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(selected = s.mode == id, onClick = { s = s.copy(mode = id) })
+                Text(label)
+            }
+        }
+
+        Text("My PC (optional, no key)", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
+        Text(
+            "If Ollama runs on your PC, enter the PC's Wi-Fi address, e.g. 192.168.1.5. On the PC, set OLLAMA_HOST=0.0.0.0 so the phone can reach it. Phone and PC must be on the same Wi-Fi.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Field("PC address", s.ollamaUrl) { s = s.copy(ollamaUrl = it.trim()) }
+        Field("Ollama model name", s.ollamaModel) { s = s.copy(ollamaModel = it.trim()) }
+
+        Text("Cloud (optional, needs keys)", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
+        Text(
+            "Not needed. Only fill these if you want a cloud AI as an extra. Keys stay in this app's private storage.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Field("Anthropic (Claude) API key", s.anthropicKey, secret = true) { s = s.copy(anthropicKey = it.trim()) }
         Field("Claude model", s.anthropicModel) { s = s.copy(anthropicModel = it.trim()) }
         Field("OpenAI API key", s.openaiKey, secret = true) { s = s.copy(openaiKey = it.trim()) }
         Field("OpenAI model", s.openaiModel) { s = s.copy(openaiModel = it.trim()) }
         Field("Gemini API key", s.geminiKey, secret = true) { s = s.copy(geminiKey = it.trim()) }
         Field("Gemini model", s.geminiModel) { s = s.copy(geminiModel = it.trim()) }
-        Text(
-            Providers.all.joinToString("\n") { "${it.label}: ${it.capabilities}" },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 4.dp),
-        )
 
         Text("Voice", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -378,7 +450,10 @@ fun SettingsScreen(vm: JarvisVM) {
         Field("System prompt", s.systemPrompt) { s = s.copy(systemPrompt = it) }
 
         Spacer(Modifier.height(12.dp))
-        Button(onClick = { vm.saveSettings(s) }, modifier = Modifier.fillMaxWidth()) { Text("Save settings") }
+        Button(
+            onClick = { vm.saveSettings(s.copy(localModel = vm.settings.localModel)) },
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Save settings") }
         if (vm.status == "Settings saved") {
             Text("Saved ✓", color = MaterialTheme.colorScheme.secondary, modifier = Modifier.padding(top = 6.dp))
         }

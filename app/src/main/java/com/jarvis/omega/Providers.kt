@@ -26,6 +26,9 @@ interface Provider {
 
     fun key(s: Settings): String
 
+    /** True when this provider can be used right now (key entered, model downloaded, ...). */
+    fun available(s: Settings): Boolean = key(s).isNotBlank()
+
     suspend fun stream(
         s: Settings,
         history: List<Pair<String, String>>,
@@ -35,7 +38,8 @@ interface Provider {
 }
 
 object Providers {
-    val all: List<Provider> = listOf(AnthropicProvider, OpenAiProvider, GeminiProvider)
+    val all: List<Provider> =
+        listOf(LocalProvider, OllamaProvider, AnthropicProvider, OpenAiProvider, GeminiProvider)
 }
 
 private val http: OkHttpClient = OkHttpClient.Builder()
@@ -64,6 +68,27 @@ private suspend fun sse(req: Request, onData: suspend (String) -> Unit) {
                     val d = line.removePrefix("data:").trim()
                     if (d.isNotEmpty() && d != "[DONE]") onData(d)
                 }
+            }
+        }
+    }
+}
+
+/** Reads a newline-delimited JSON response (used by Ollama). */
+private suspend fun lines(req: Request, onLine: suspend (String) -> Unit) {
+    withContext(Dispatchers.IO) {
+        val call = http.newCall(req)
+        currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
+            if (cause != null) call.cancel()
+        }
+        call.execute().use { resp ->
+            val body = resp.body ?: throw IOException("Empty response")
+            if (!resp.isSuccessful) {
+                throw IOException("HTTP ${resp.code}: ${body.string().take(300)}")
+            }
+            val src = body.source()
+            while (!src.exhausted()) {
+                val line = src.readUtf8Line() ?: break
+                if (line.isNotBlank()) onLine(line)
             }
         }
     }
@@ -202,24 +227,60 @@ object GeminiProvider : Provider {
     }
 }
 
+/** Uses Ollama running on your own PC over Wi-Fi. No key needed. */
+object OllamaProvider : Provider {
+    override val id = "ollama"
+    override val label = "PC (Ollama)"
+    override val capabilities = "text, streaming, runs on your PC over Wi-Fi, no key"
+    override fun key(s: Settings) = s.ollamaUrl
+
+    fun baseUrl(s: Settings): String {
+        var u = s.ollamaUrl.trim().trimEnd('/')
+        if (!u.startsWith("http://") && !u.startsWith("https://")) u = "http://$u"
+        if (Regex("^https?://[^/:]+$").matches(u)) u = "$u:11434"
+        return u
+    }
+
+    override suspend fun stream(
+        s: Settings,
+        history: List<Pair<String, String>>,
+        system: String,
+        onDelta: suspend (String) -> Unit,
+    ) {
+        val msgs = JSONArray()
+        msgs.put(JSONObject().put("role", "system").put("content", system))
+        history.forEach { (role, text) ->
+            msgs.put(JSONObject().put("role", role).put("content", text))
+        }
+        val body = JSONObject()
+            .put("model", s.ollamaModel)
+            .put("stream", true)
+            .put("messages", msgs)
+        val req = Request.Builder()
+            .url(baseUrl(s) + "/api/chat")
+            .post(body.toString().toRequestBody(JSON_TYPE))
+            .build()
+        lines(req) { line ->
+            val o = JSONObject(line)
+            if (o.has("error")) throw IOException(o.str("error"))
+            val t = o.optJSONObject("message")?.str("content") ?: ""
+            if (t.isNotEmpty()) onDelta(t)
+        }
+    }
+}
+
 /**
- * Chooses which provider(s) to try, in order. Simple, transparent heuristics:
+ * Chooses which provider(s) to try, in order.
  * - manual mode: only the chosen provider
- * - auto: code-like requests prefer Claude, very long inputs prefer Gemini, otherwise Claude -> Gemini -> OpenAI
- * Only providers that have an API key are considered. Later providers act as fallbacks.
+ * - auto: on-device model first, then your PC (Ollama), then any cloud provider you added a key for.
+ * Later providers act as fallbacks if an earlier one fails.
  */
 object Router {
-    private val codeHint =
-        Regex("(?i)\\b(code|function|bug|stack ?trace|compile|python|kotlin|java|sql|regex|script|debug)\\b")
+    private val order = listOf("local", "ollama", "anthropic", "gemini", "openai")
 
-    fun plan(text: String, s: Settings): List<Provider> {
-        val avail = Providers.all.filter { it.key(s).isNotBlank() }
+    fun plan(s: Settings): List<Provider> {
+        val avail = Providers.all.filter { it.available(s) }
         if (s.mode != "auto") return avail.filter { it.id == s.mode }
-        val pref = when {
-            codeHint.containsMatchIn(text) || text.contains("\u0060\u0060\u0060") -> listOf("anthropic", "openai", "gemini")
-            text.length > 4000 -> listOf("gemini", "anthropic", "openai")
-            else -> listOf("anthropic", "gemini", "openai")
-        }
-        return avail.sortedBy { pref.indexOf(it.id) }
+        return avail.sortedBy { order.indexOf(it.id) }
     }
 }

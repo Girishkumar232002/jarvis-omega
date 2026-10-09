@@ -20,7 +20,15 @@
         android:icon="@mipmap/ic_launcher"
         android:label="JARVIS"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Jarvis">
+        android:theme="@style/Theme.Jarvis"
+        android:usesCleartextTraffic="true">
+
+        <uses-native-library
+            android:name="libvndksupport.so"
+            android:required="false" />
+        <uses-native-library
+            android:name="libOpenCL.so"
+            android:required="false" />
 
         <activity
             android:name=".MainActivity"
